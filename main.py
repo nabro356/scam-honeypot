@@ -101,14 +101,25 @@ def load_ip_dataset(path):
     
     # Clean pincode
     df["pincode"] = pd.to_numeric(df["pincode"], errors="coerce")
+    
+    # Report per-field missing/invalid counts before dropping
+    missing_pincode = df["pincode"].isna().sum()
+    missing_date = df["date"].isna().sum()
+    missing_complaint = df["complaint_name"].isna().sum() + (df["complaint_name"].str.strip() == "").sum()
+    print(f"\n  Missing/invalid values:")
+    print(f"    pincode:        {missing_pincode:,}")
+    print(f"    timestamp/date: {missing_date:,}")
+    print(f"    complaint_name: {missing_complaint:,}")
+    
     df = df.dropna(subset=["pincode", "date", "complaint_name"])
+    df = df[df["complaint_name"].str.strip() != ""]
     df["pincode"] = df["pincode"].astype(int)
     
     # Clean complaint names
     df["complaint_name"] = df["complaint_name"].str.strip().str.title()
     df["complaint"] = df["complaint"].astype(str).str.strip()
     
-    print(f"  Clean records: {len(df):,}")
+    print(f"\n  Clean records: {len(df):,} (dropped {len(pd.read_csv(path)) - len(df):,})")
     print(f"  Date range: {df['date'].min()} to {df['date'].max()}")
     print(f"  Unique complaints: {df['complaint_name'].nunique()}")
     print(f"  Unique pincodes: {df['pincode'].nunique()}")
