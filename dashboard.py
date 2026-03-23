@@ -301,14 +301,22 @@ def main():
             merged_ip = merged_ip.merge(pin_mandal, on="pincode", how="left")
     # ── Combine all alerts ───────────────────────────────────────────────
     all_alerts = pd.concat(reports.values(), ignore_index=True) if reports else pd.DataFrame()
-    # Normalize severity column
+    # Normalize & enrich alerts
     if not all_alerts.empty:
         if "severity" not in all_alerts.columns:
             all_alerts["severity"] = "⚠️ ALERT"
-        # Determine region column
-        for rc in ["district", "mandal", "pincode"]:
-            if rc in all_alerts.columns:
-                break
+        # Enrich alerts with district via pincode mapping
+        if "district" not in all_alerts.columns and pin_dir is not None:
+            if "pincode" in all_alerts.columns:
+                pin_to_district = pin_dir[["pincode", "district"]].drop_duplicates(subset=["pincode"])
+                all_alerts["pincode"] = pd.to_numeric(all_alerts["pincode"], errors="coerce")
+                all_alerts = all_alerts.merge(pin_to_district, on="pincode", how="left")
+            elif "mandal" in all_alerts.columns and "mandal" in pin_dir.columns:
+                mandal_to_district = (
+                    pin_dir[["mandal", "district"]]
+                    .drop_duplicates(subset=["mandal"])
+                )
+                all_alerts = all_alerts.merge(mandal_to_district, on="mandal", how="left")
     # ── Sidebar ──────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown("# 🦠 Outbreak Dashboard")
@@ -574,22 +582,23 @@ def main():
         folium.LayerControl().add_to(m)
         st_folium(m, width=None, height=480, use_container_width=True)
     with chart_col:
-        st.markdown('<div class="section-header">📊 Disease Distribution</div>',
+        # ── Disease Distribution (from raw data) ─────────────────────────
+        st.markdown('<div class="section-header">📊 Disease Distribution (Cases)</div>',
                     unsafe_allow_html=True)
-        if not filtered_alerts.empty and "complaint_name" in filtered_alerts.columns:
+        if filtered_ip is not None and len(filtered_ip) > 0:
             disease_counts = (
-                filtered_alerts["complaint_name"]
+                filtered_ip["complaint_name"]
                 .value_counts()
                 .head(15)
                 .reset_index()
             )
-            disease_counts.columns = ["Disease", "Alerts"]
+            disease_counts.columns = ["Disease", "Cases"]
             fig_bar = px.bar(
                 disease_counts,
-                x="Alerts",
+                x="Cases",
                 y="Disease",
                 orientation="h",
-                color="Alerts",
+                color="Cases",
                 color_continuous_scale=["#38ef7d", "#ffd200", "#ff4b2b"],
             )
             fig_bar.update_layout(
@@ -604,65 +613,102 @@ def main():
             )
             st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.info("No alert data to display.")
-        # District breakdown
-        st.markdown('<div class="section-header">🏛️ Alerts by District</div>',
+            st.info("No case data available. Please place ip.csv in the same directory.")
+        # ── Cases by District (from raw data) ────────────────────────────
+        st.markdown('<div class="section-header">🏛️ Cases by District</div>',
                     unsafe_allow_html=True)
-        if not filtered_alerts.empty and "district" in filtered_alerts.columns:
-            dist_counts = (
-                filtered_alerts
-                .groupby("district")
-                .agg(
-                    alerts=("severity", "count"),
-                    critical=("severity", lambda x: x.str.contains("CRITICAL", na=False).sum())
+        if filtered_ip is not None and "district" in filtered_ip.columns and len(filtered_ip) > 0:
+            dist_data = filtered_ip[filtered_ip["district"].notna() & (filtered_ip["district"] != "Unknown")]
+            if len(dist_data) > 0:
+                dist_counts = (
+                    dist_data
+                    .groupby("district")
+                    .agg(cases=("health_id", "count"))
+                    .reset_index()
+                    .sort_values("cases", ascending=False)
+                    .head(10)
                 )
-                .reset_index()
-                .sort_values("alerts", ascending=False)
-                .head(10)
-            )
-            fig_dist = px.bar(
-                dist_counts,
-                x="district",
-                y=["alerts", "critical"],
-                barmode="overlay",
-                color_discrete_map={"alerts": "#3a7bd5", "critical": "#ff4b2b"},
-                labels={"value": "Count", "district": "District", "variable": "Type"}
-            )
-            fig_dist.update_layout(
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#ccd6f6", family="Inter"),
-                margin=dict(l=0, r=10, t=10, b=0),
-                height=200,
-                legend=dict(orientation="h", y=1.15),
-            )
-            st.plotly_chart(fig_dist, use_container_width=True)
+                # Add alert counts from filtered_alerts if available
+                if not filtered_alerts.empty and "district" in filtered_alerts.columns:
+                    alert_by_dist = (
+                        filtered_alerts
+                        .groupby("district")
+                        .agg(alerts=("severity", "count"))
+                        .reset_index()
+                    )
+                    dist_counts = dist_counts.merge(alert_by_dist, on="district", how="left")
+                    dist_counts["alerts"] = dist_counts["alerts"].fillna(0).astype(int)
+                else:
+                    dist_counts["alerts"] = 0
+                fig_dist = go.Figure()
+                fig_dist.add_trace(go.Bar(
+                    x=dist_counts["district"], y=dist_counts["cases"],
+                    name="Total Cases", marker_color="#3a7bd5"
+                ))
+                fig_dist.add_trace(go.Bar(
+                    x=dist_counts["district"], y=dist_counts["alerts"],
+                    name="Alerts", marker_color="#ff4b2b"
+                ))
+                fig_dist.update_layout(
+                    barmode="group",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#ccd6f6", family="Inter"),
+                    margin=dict(l=0, r=10, t=10, b=0),
+                    height=200,
+                    legend=dict(orientation="h", y=1.15),
+                )
+                st.plotly_chart(fig_dist, use_container_width=True)
+            else:
+                st.info("No district mapping available.")
         else:
-            st.info("No district data available.")
+            st.info("No district data available. Ensure pincode_directory.csv is present.")
     # ── Time Series Chart ────────────────────────────────────────────────
     st.markdown('<div class="section-header">📈 Daily Case Trend</div>',
                 unsafe_allow_html=True)
     if filtered_ip is not None and len(filtered_ip) > 0:
-        # Let user pick a disease for the time series
+        # Disease selector — default to sidebar selection or top disease
         ts_diseases = sorted(filtered_ip["complaint_name"].unique())
-        ts_cols = st.columns([3, 1])
+        # Set default based on sidebar selection
+        if selected_diseases and any(d in ts_diseases for d in selected_diseases):
+            default_idx = ts_diseases.index(next(d for d in selected_diseases if d in ts_diseases))
+        else:
+            default_idx = 0
+        ts_cols = st.columns([3, 2])
         with ts_cols[0]:
             ts_disease = st.selectbox(
                 "Select disease for time series",
                 ts_diseases,
-                index=0 if ts_diseases else None,
-                label_visibility="collapsed"
+                index=default_idx,
             )
+        with ts_cols[1]:
+            # Optional district filter for time series
+            if "district" in filtered_ip.columns:
+                ts_districts = ["All Districts"] + sorted(
+                    filtered_ip[filtered_ip["district"].notna() & (filtered_ip["district"] != "Unknown")]["district"].unique()
+                )
+                ts_district = st.selectbox("District", ts_districts, index=0, key="ts_district")
+            else:
+                ts_district = "All Districts"
         if ts_disease:
+            ts_data = filtered_ip[filtered_ip["complaint_name"] == ts_disease]
+            if ts_district != "All Districts" and "district" in ts_data.columns:
+                ts_data = ts_data[ts_data["district"] == ts_district]
             daily = (
-                filtered_ip[filtered_ip["complaint_name"] == ts_disease]
+                ts_data
                 .groupby("date")
                 .agg(cases=("health_id", "count"))
                 .reset_index()
                 .sort_values("date")
             )
+            # Fill missing dates with 0
+            if len(daily) > 1:
+                full_range = pd.date_range(daily["date"].min(), daily["date"].max(), freq="D")
+                full_df = pd.DataFrame({"date": full_range.date})
+                daily = full_df.merge(daily, on="date", how="left")
+                daily["cases"] = daily["cases"].fillna(0).astype(int)
             fig_ts = go.Figure()
-            # Case count line
+            # Case count area chart
             fig_ts.add_trace(go.Scatter(
                 x=daily["date"], y=daily["cases"],
                 mode="lines",
@@ -684,6 +730,8 @@ def main():
                 disease_alerts = filtered_alerts[
                     filtered_alerts["complaint_name"].str.lower() == ts_disease.lower()
                 ]
+                if ts_district != "All Districts" and "district" in disease_alerts.columns:
+                    disease_alerts = disease_alerts[disease_alerts["district"] == ts_district]
                 if not disease_alerts.empty:
                     alert_dates = disease_alerts["date"].unique()
                     alert_cases = daily[daily["date"].isin(alert_dates)]
@@ -691,24 +739,28 @@ def main():
                         fig_ts.add_trace(go.Scatter(
                             x=alert_cases["date"], y=alert_cases["cases"],
                             mode="markers",
-                            name="⚠️ Alert",
+                            name="⚠️ Alert Days",
                             marker=dict(color="#ff4b2b", size=10, symbol="triangle-up",
                                        line=dict(width=1, color="white"))
                         ))
+            title_text = f"{ts_disease}"
+            if ts_district != "All Districts":
+                title_text += f" — {ts_district}"
             fig_ts.update_layout(
+                title=dict(text=title_text, font=dict(size=14, color="#ccd6f6")),
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
                 font=dict(color="#ccd6f6", family="Inter"),
-                margin=dict(l=0, r=10, t=30, b=0),
-                height=300,
-                legend=dict(orientation="h", y=1.1),
+                margin=dict(l=0, r=10, t=40, b=0),
+                height=320,
+                legend=dict(orientation="h", y=1.12),
                 xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
                 yaxis=dict(gridcolor="rgba(255,255,255,0.05)", title="Cases"),
                 hovermode="x unified"
             )
             st.plotly_chart(fig_ts, use_container_width=True)
     else:
-        st.info("No case data available for time series.")
+        st.info("No case data available for time series. Please place ip.csv in the same directory.")
     # ── Alert Table ──────────────────────────────────────────────────────
     st.markdown('<div class="section-header">📋 Alert Details</div>',
                 unsafe_allow_html=True)
