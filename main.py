@@ -74,13 +74,16 @@ def load_ip_dataset(path):
         cl = col.strip().lower().replace(" ", "_")
         if "health" in cl and "id" in cl:
             col_map[col] = "health_id"
-        elif cl in ("complaint", "complaint_code", "snomed_code", "snomed_ct_code"):
+        elif cl in ("complaint", "complaint_code", "snomed_code", "snomed_ct_code",
+                     "diagnosis", "diagnosis_code"):
             col_map[col] = "complaint"
-        elif cl in ("complaint_name", "complaint_desc", "snomed_name", "ct_name"):
+        elif cl in ("complaint_name", "complaint_desc", "snomed_name", "ct_name",
+                     "diagnosis_name", "diagnosis_desc"):
             col_map[col] = "complaint_name"
         elif cl in ("pincode", "pin_code", "zip", "postal_code"):
             col_map[col] = "pincode"
-        elif cl in ("timestamp", "time_stamp", "unix_timestamp", "created_at"):
+        elif cl in ("timestamp", "time_stamp", "unix_timestamp", "created_at",
+                     "diagnosis_event_ts", "event_ts", "event_timestamp"):
             col_map[col] = "timestamp"
     
     df = df.rename(columns=col_map)
@@ -91,12 +94,28 @@ def load_ip_dataset(path):
     if missing:
         print(f"ERROR: Missing columns: {missing}")
         print(f"  Available columns: {list(df.columns)}")
-        print("  Please ensure your CSV has: health_id, complaint, complaint_name, pincode, timestamp")
+        print("  Please ensure your CSV has columns for: health_id, diagnosis/complaint, "
+              "diagnosis_name/complaint_name, postal_code/pincode, timestamp/diagnosis_event_ts")
         sys.exit(1)
     
     # Convert timestamp to datetime and extract date
-    df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
-    df["datetime"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
+    # Auto-detect: datetime string (e.g. "2025-12-09 10:42:05") vs Unix timestamp
+    sample_val = df["timestamp"].dropna().iloc[0] if len(df["timestamp"].dropna()) > 0 else ""
+    is_unix = False
+    try:
+        float(sample_val)
+        is_unix = True
+    except (ValueError, TypeError):
+        is_unix = False
+    
+    if is_unix:
+        print("  Timestamp format: Unix (numeric)")
+        df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
+    else:
+        print(f"  Timestamp format: datetime string (e.g. '{sample_val}')")
+        df["datetime"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    
     df["date"] = df["datetime"].dt.date
     
     # Clean pincode
