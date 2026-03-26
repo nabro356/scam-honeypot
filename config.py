@@ -10,6 +10,14 @@ Usage:
   ip_df_enriched = enrich_dataframe(ip_df)      # Adds icd10_code + icd10_name columns
   # Standalone:
   python snomed_icd_mapper.py
+  # Query just the unique codes (much smaller)
+codes_df = pd.read_sql("""
+    SELECT DISTINCT diagnosis, diagnosis_name 
+    FROM your_table
+""", conn)
+# Pass to mapper
+from snomed_icd_mapper import build_mapping
+mapping = build_mapping(df=codes_df)
 """
 import pandas as pd
 import requests
