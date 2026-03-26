@@ -1,3 +1,10 @@
+"""
+Shared data loading utilities for outbreak detection scripts.
+Used by: outbreak_detection.py, outbreak_iforest.py, outbreak_prophet.py, dashboard.py
+Supports two modes:
+  1. CSV mode: reads ip.csv and pincode_directory.csv from disk
+  2. DataFrame mode: accepts pre-loaded DataFrames (e.g., from Impala)
+"""
 import pandas as pd
 import numpy as np
 import os
@@ -16,14 +23,25 @@ def print_header(title):
     print("=" * width)
 def print_subheader(title):
     print(f"\n--- {title} ---")
-def load_ip_dataset(path=None):
-    """Load and clean the health complaint (IP) dataset."""
-    path = path or IP_DATASET_PATH
-    print(f"\nLoading IP dataset from: {path}")
-    if not os.path.exists(path):
-        print(f"ERROR: File not found: {path}")
-        sys.exit(1)
-    df = pd.read_csv(path)
+def load_ip_dataset(path=None, df=None):
+    """
+    Load and clean the health complaint (IP) dataset.
+    Args:
+        path: Path to CSV file (used if df is None)
+        df:   Pre-loaded DataFrame (e.g., from Impala query). Takes priority over path.
+    Returns:
+        Cleaned DataFrame with standardized columns.
+    """
+    if df is not None:
+        print(f"\nUsing pre-loaded DataFrame ({len(df):,} rows)")
+        df = df.copy()
+    else:
+        path = path or IP_DATASET_PATH
+        print(f"\nLoading IP dataset from: {path}")
+        if not os.path.exists(path):
+            print(f"ERROR: File not found: {path}")
+            sys.exit(1)
+        df = pd.read_csv(path)
     raw_count = len(df)
     print(f"  Raw records: {raw_count:,}")
     # Standardize column names
@@ -80,20 +98,29 @@ def load_ip_dataset(path=None):
     print(f"  Unique complaints: {df['complaint_name'].nunique()}")
     print(f"  Unique pincodes: {df['pincode'].nunique()}")
     return df
-def load_pincode_mapping(path=None):
-    """Load India Post pincode directory, return (mapping_df, has_mandal)."""
-    path = path or PINCODE_DIR_PATH
-    if not os.path.exists(path):
-        print(f"WARNING: Pincode directory not found: {path}")
-        return None, False
-    for encoding in ["utf-8", "latin-1", "cp1252"]:
-        try:
-            pin_df = pd.read_csv(path, encoding=encoding, low_memory=False)
-            break
-        except (UnicodeDecodeError, pd.errors.ParserError):
-            continue
+def load_pincode_mapping(path=None, df=None):
+    """
+    Load India Post pincode directory, return (mapping_df, has_mandal).
+    Args:
+        path: Path to CSV file (used if df is None)
+        df:   Pre-loaded DataFrame (e.g., from Impala). Takes priority over path.
+    """
+    if df is not None:
+        print(f"\nUsing pre-loaded pincode DataFrame ({len(df):,} rows)")
+        pin_df = df.copy()
     else:
-        return None, False
+        path = path or PINCODE_DIR_PATH
+        if not os.path.exists(path):
+            print(f"WARNING: Pincode directory not found: {path}")
+            return None, False
+        for encoding in ["utf-8", "latin-1", "cp1252"]:
+            try:
+                pin_df = pd.read_csv(path, encoding=encoding, low_memory=False)
+                break
+            except (UnicodeDecodeError, pd.errors.ParserError):
+                continue
+        else:
+            return None, False
     col_map = {}
     for col in pin_df.columns:
         cl = col.strip().lower().replace(" ", "_")
