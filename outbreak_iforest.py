@@ -167,7 +167,16 @@ def classify_severity(row):
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
-def main():
+def main(ip_df=None, pincode_df=None):
+    """
+    Run Isolation Forest outbreak detection.
+    
+    Args:
+        ip_df:      Pre-loaded health data DataFrame (e.g., from Impala).
+                    If None, reads from ip.csv.
+        pincode_df: Pre-loaded pincode directory DataFrame.
+                    If None, reads from pincode_directory.csv.
+    """
     print_header("OUTBREAK DETECTION — ISOLATION FOREST")
     print(f"  Contamination: {CONTAMINATION} ({CONTAMINATION*100:.0f}% expected anomalies)")
     print(f"  Trees: {N_ESTIMATORS}")
@@ -175,8 +184,8 @@ def main():
     print(f"  Min cases threshold: {MIN_TOTAL_CASES}")
     
     # ── Load data ────────────────────────────────────────────────────────
-    ip_df = load_ip_dataset()
-    pin_mapping, has_mandal = load_pincode_mapping()
+    ip_df = load_ip_dataset(df=ip_df)
+    pin_mapping, has_mandal = load_pincode_mapping(df=pincode_df)
     merged = merge_geography(ip_df, pin_mapping, has_mandal)
     
     # ── Run at each geographic level ─────────────────────────────────────
